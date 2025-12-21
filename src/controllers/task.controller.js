@@ -95,7 +95,12 @@ export async function getTasks(req, res) {
     });
   }
 }
+
+
+
 export async function getTaskById(req, res) {
+   console.log('🔥 getTaskById HIT');
+  console.log('ID RECEIVED:', req.params.id);
   try {
     const { id } = req.params;
 
@@ -196,5 +201,45 @@ export async function updateTask(req, res) {
     }
 
     return res.status(500).json({ message: 'Failed to update task', error: error.message });
+  }
+}
+
+export async function deleteTask(req, res) {
+  try {
+    const { id } = req.params;
+
+    // Fetch task for history
+    const { data: task, error: fetchError } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    // Delete task
+    const { error: deleteError } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) throw deleteError;
+
+    // Save history
+    await supabase.from('task_history').insert([
+      {
+        task_id: id,
+        action: 'deleted',
+        old_value: task,
+        changed_by: 'system',
+      },
+    ]);
+
+    return res.json({ message: 'Task deleted successfully' });
+
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to delete task', error: error.message });
   }
 }
