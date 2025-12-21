@@ -162,13 +162,22 @@ export async function updateTask(req, res) {
     let finalUpdates = { ...updates };
 
     // 3. Re-classify if description changed
-    if (updates.description) {
-      const classification = classifyTask(updates.description);
-      finalUpdates.category = classification.category;
-      finalUpdates.priority = classification.priority;
-      finalUpdates.extracted_entities = classification.extracted_entities;
-      finalUpdates.suggested_actions = classification.suggested_actions;
-    }
+   if (updates.description) {
+  const classification = classifyTask(updates.description);
+
+  // Respect user override
+  if (!updates.category) {
+    finalUpdates.category = classification.category;
+  }
+
+  if (!updates.priority) {
+    finalUpdates.priority = classification.priority;
+  }
+
+  finalUpdates.extracted_entities = classification.extracted_entities;
+  finalUpdates.suggested_actions = classification.suggested_actions;
+}
+
 
     finalUpdates.updated_at = new Date();
 
