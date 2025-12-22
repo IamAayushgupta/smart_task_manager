@@ -1,19 +1,45 @@
 import { supabase } from '../config/supabase.js';
 import { classifyTask } from '../services/classification.service.js';
-import { createTaskSchema } from '../validators/task.schema.js';
-import { updateTaskSchema } from '../validators/task.schema.js';
+import { createTaskSchema, updateTaskSchema } from '../validators/task.schema.js';
+import { extractIntentML } from '../services/intentML.service.js';
 
+/* =====================================================
+   CREATE TASK
+===================================================== */
 export async function createTask(req, res) {
   try {
     // 1. Validate request
     const validatedData = createTaskSchema.parse(req.body);
-
     const { title, description, assigned_to, due_date } = validatedData;
 
-    // 2. Run classification
-    const classification = classifyTask(description);
+    // 2. Always run rule-based classification first
+    let classification = classifyTask(description);
 
-    // 3. Insert task
+    // 3. Try ML enrichment (NON-BLOCKING)
+    try {
+      const mlResult = await extractIntentML(description);
+
+      // Override priority only if ML explicitly gives it
+      if (mlResult?.priority) {
+        classification.priority = mlResult.priority;
+      }
+
+      // Attach intent if available
+      if (mlResult?.intent) {
+        classification.intent = mlResult.intent;
+      }
+
+      // Merge entities safely
+      classification.extracted_entities = {
+        ...classification.extracted_entities,
+        ...mlResult,
+      };
+
+    } catch (err) {
+      console.warn('⚠️ ML service unavailable, using rule-based logic');
+    }
+
+    // 4. Insert task
     const { data: task, error } = await supabase
       .from('tasks')
       .insert([
@@ -33,7 +59,7 @@ export async function createTask(req, res) {
 
     if (error) throw error;
 
-    // 4. Insert task history
+    // 5. Insert task history
     await supabase.from('task_history').insert([
       {
         task_id: task.id,
@@ -43,7 +69,6 @@ export async function createTask(req, res) {
       },
     ]);
 
-    // 5. Return response
     return res.status(201).json(task);
 
   } catch (error) {
@@ -61,15 +86,13 @@ export async function createTask(req, res) {
   }
 }
 
+/* =====================================================
+   GET TASKS
+===================================================== */
+
 export async function getTasks(req, res) {
   try {
-    const {
-      status,
-      category,
-      priority,
-      limit = 10,
-      offset = 0,
-    } = req.query;
+    const { status, category, priority, limit = 10, offset = 0 } = req.query;
 
     let query = supabase.from('tasks').select('*');
 
@@ -96,15 +119,13 @@ export async function getTasks(req, res) {
   }
 }
 
-
-
+/* =====================================================
+   GET TASK BY ID + HISTORY
+===================================================== */
 export async function getTaskById(req, res) {
-   console.log('🔥 getTaskById HIT');
-  console.log('ID RECEIVED:', req.params.id);
   try {
     const { id } = req.params;
 
-    // 1. Fetch task
     const { data: task, error: taskError } = await supabase
       .from('tasks')
       .select('*')
@@ -115,7 +136,6 @@ export async function getTaskById(req, res) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    // 2. Fetch task history
     const { data: history, error: historyError } = await supabase
       .from('task_history')
       .select('*')
@@ -124,11 +144,7 @@ export async function getTaskById(req, res) {
 
     if (historyError) throw historyError;
 
-    // 3. Return combined response
-    return res.json({
-      task,
-      history,
-    });
+    return res.json({ task, history });
 
   } catch (error) {
     return res.status(500).json({
@@ -138,17 +154,15 @@ export async function getTaskById(req, res) {
   }
 }
 
-
-
-
+/* =====================================================
+   UPDATE TASK
+===================================================== */
 export async function updateTask(req, res) {
   try {
     const { id } = req.params;
-
-    // 1. Validate input
     const updates = updateTaskSchema.parse(req.body);
 
-    // 2. Fetch existing task
+    // Fetch existing task
     const { data: existingTask, error: fetchError } = await supabase
       .from('tasks')
       .select('*')
@@ -161,27 +175,43 @@ export async function updateTask(req, res) {
 
     let finalUpdates = { ...updates };
 
-    // 3. Re-classify if description changed
-   if (updates.description) {
-  const classification = classifyTask(updates.description);
+    // Re-classify only if description changes
+    if (updates.description) {
+      let classification = classifyTask(updates.description);
 
-  // Respect user override
-  if (!updates.category) {
-    finalUpdates.category = classification.category;
-  }
+      // ML enrichment
+      try {
+        const mlResult = await extractIntentML(updates.description);
 
-  if (!updates.priority) {
-    finalUpdates.priority = classification.priority;
-  }
+        if (mlResult?.priority && !updates.priority) {
+          classification.priority = mlResult.priority;
+        }
 
-  finalUpdates.extracted_entities = classification.extracted_entities;
-  finalUpdates.suggested_actions = classification.suggested_actions;
-}
+        classification.extracted_entities = {
+          ...classification.extracted_entities,
+          ...mlResult,
+        };
 
+      } catch (err) {
+        console.warn('⚠️ ML service unavailable during update');
+      }
+
+      // Respect user overrides
+      if (!updates.category) {
+        finalUpdates.category = classification.category;
+      }
+
+      if (!updates.priority) {
+        finalUpdates.priority = classification.priority;
+      }
+
+      finalUpdates.extracted_entities = classification.extracted_entities;
+      finalUpdates.suggested_actions = classification.suggested_actions;
+    }
 
     finalUpdates.updated_at = new Date();
 
-    // 4. Update task
+    // Update task
     const { data: updatedTask, error: updateError } = await supabase
       .from('tasks')
       .update(finalUpdates)
@@ -191,7 +221,7 @@ export async function updateTask(req, res) {
 
     if (updateError) throw updateError;
 
-    // 5. Save history
+    // Save history
     await supabase.from('task_history').insert([
       {
         task_id: id,
@@ -206,18 +236,26 @@ export async function updateTask(req, res) {
 
   } catch (error) {
     if (error.name === 'ZodError') {
-      return res.status(400).json({ message: 'Validation failed', errors: error.errors });
+      return res.status(400).json({
+        message: 'Validation failed',
+        errors: error.errors,
+      });
     }
 
-    return res.status(500).json({ message: 'Failed to update task', error: error.message });
+    return res.status(500).json({
+      message: 'Failed to update task',
+      error: error.message,
+    });
   }
 }
 
+/* =====================================================
+   DELETE TASK
+===================================================== */
 export async function deleteTask(req, res) {
   try {
     const { id } = req.params;
 
-    // Fetch task for history
     const { data: task, error: fetchError } = await supabase
       .from('tasks')
       .select('*')
@@ -228,7 +266,6 @@ export async function deleteTask(req, res) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    // Delete task
     const { error: deleteError } = await supabase
       .from('tasks')
       .delete()
@@ -236,7 +273,6 @@ export async function deleteTask(req, res) {
 
     if (deleteError) throw deleteError;
 
-    // Save history
     await supabase.from('task_history').insert([
       {
         task_id: id,
@@ -249,6 +285,9 @@ export async function deleteTask(req, res) {
     return res.json({ message: 'Task deleted successfully' });
 
   } catch (error) {
-    return res.status(500).json({ message: 'Failed to delete task', error: error.message });
+    return res.status(500).json({
+      message: 'Failed to delete task',
+      error: error.message,
+    });
   }
 }

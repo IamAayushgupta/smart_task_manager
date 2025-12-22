@@ -13,9 +13,6 @@ import {
 
 const router = express.Router();
 
-router.get('/test', (req, res) => {
-  res.send('TASK ROUTES WORKING');
-});
 
 router.get('/tasks', getTasks);
 router.get('/tasks/:id', getTaskById);

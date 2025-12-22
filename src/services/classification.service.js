@@ -1,61 +1,144 @@
 // ==============================
-// Keyword Maps
+// Feature Weights (ML-like)
 // ==============================
 
-const CATEGORY_KEYWORDS = {
-  scheduling: ['meeting', 'schedule', 'call', 'appointment', 'deadline'],
-  finance: ['payment', 'invoice', 'bill', 'budget', 'cost', 'expense'],
-  technical: ['bug', 'fix', 'error', 'install', 'repair', 'maintain'],
-  safety: ['safety', 'hazard', 'inspection', 'compliance', 'ppe'],
+const CATEGORY_FEATURES = {
+  scheduling: {
+    meeting: 2,
+    schedule: 2,
+    call: 1.5,
+    appointment: 2,
+    deadline: 1.5,
+  },
+  finance: {
+    payment: 2,
+    invoice: 2,
+    bill: 1.5,
+    budget: 2,
+    cost: 1.5,
+    expense: 1.5,
+  },
+  technical: {
+    bug: 2,
+    fix: 1.5,
+    error: 2,
+    install: 1.5,
+    repair: 1.5,
+    maintain: 1,
+  },
+  safety: {
+    safety: 2,
+    hazard: 2,
+    inspection: 1.5,
+    compliance: 1.5,
+    ppe: 1,
+  },
 };
 
-const PRIORITY_KEYWORDS = {
-  high: ['urgent', 'asap', 'immediately', 'today', 'critical', 'emergency'],
-  medium: ['soon', 'this week', 'important'],
-};
-
-const SUGGESTED_ACTIONS = {
-  scheduling: ['Block calendar', 'Send invite', 'Prepare agenda', 'Set reminder'],
-  finance: ['Check budget', 'Get approval', 'Generate invoice', 'Update records'],
-  technical: ['Diagnose issue', 'Check resources', 'Assign technician', 'Document fix'],
-  safety: ['Conduct inspection', 'File report', 'Notify supervisor', 'Update checklist'],
-  general: ['Review task', 'Assign owner', 'Set deadline'],
+const PRIORITY_FEATURES = {
+  high: {
+    urgent: 2.5,
+    asap: 2.5,
+    immediately: 2,
+    today: 2,
+    critical: 2.5,
+    emergency: 3,
+  },
+  medium: {
+    soon: 1.5,
+    'this week': 1.5,
+    important: 1.2,
+  },
 };
 
 // ==============================
-// Category Detection
+// Text Preprocessing (ML-style)
 // ==============================
 
-function detectCategory(text) {
-  const lowerText = text.toLowerCase();
-
-  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    if (keywords.some(keyword => lowerText.includes(keyword))) {
-      return category;
-    }
-  }
-
-  return 'general';
+function preprocessText(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .split(/\s+/);
 }
 
 // ==============================
-// Priority Detection
+// Generic Scoring Engine
 // ==============================
 
-function detectPriority(text) {
-  const lowerText = text.toLowerCase();
+function scoreText(tokens, featureMap) {
+  const scores = {};
 
-  for (const [priority, keywords] of Object.entries(PRIORITY_KEYWORDS)) {
-    if (keywords.some(keyword => lowerText.includes(keyword))) {
-      return priority;
+  for (const label of Object.keys(featureMap)) {
+    scores[label] = 0;
+
+    for (const [keyword, weight] of Object.entries(featureMap[label])) {
+      if (tokens.includes(keyword)) {
+        scores[label] += weight;
+      }
     }
   }
 
-  return 'low';
+  return scores;
 }
 
 // ==============================
-// Entity Extraction
+// Softmax-like Normalization
+// ==============================
+
+function normalizeScores(scores) {
+  const total = Object.values(scores).reduce((a, b) => a + b, 0) || 1;
+
+  const normalized = {};
+  for (const key in scores) {
+    normalized[key] = +(scores[key] / total).toFixed(2);
+  }
+
+  return normalized;
+}
+
+// ==============================
+// Category Prediction
+// ==============================
+
+function predictCategory(text) {
+  const tokens = preprocessText(text);
+  const rawScores = scoreText(tokens, CATEGORY_FEATURES);
+  const probabilities = normalizeScores(rawScores);
+
+  const bestCategory = Object.entries(rawScores).reduce((a, b) =>
+    b[1] > a[1] ? b : a
+  )[0];
+
+  return {
+    label: rawScores[bestCategory] > 0 ? bestCategory : 'general',
+    confidence: probabilities[bestCategory] || 0,
+    probabilities,
+  };
+}
+
+// ==============================
+// Priority Prediction
+// ==============================
+
+function predictPriority(text) {
+  const tokens = preprocessText(text);
+  const rawScores = scoreText(tokens, PRIORITY_FEATURES);
+  const probabilities = normalizeScores(rawScores);
+
+  const bestPriority = Object.entries(rawScores).reduce((a, b) =>
+    b[1] > a[1] ? b : a
+  )[0];
+
+  return {
+    label: rawScores[bestPriority] > 0 ? bestPriority : 'low',
+    confidence: probabilities[bestPriority] || 0,
+    probabilities,
+  };
+}
+
+// ==============================
+// Entity Extraction (Rule-based NLP)
 // ==============================
 
 function extractEntities(text) {
@@ -67,17 +150,14 @@ function extractEntities(text) {
 
   const lowerText = text.toLowerCase();
 
-  // Date detection
   if (lowerText.includes('today')) entities.date = 'today';
   else if (lowerText.includes('tomorrow')) entities.date = 'tomorrow';
 
-  // People detection (simple regex)
-  const peopleMatch = text.match(/with\s+(\w+)/i);
+  const peopleMatch = text.match(/with\s+([a-zA-Z]+)/i);
   if (peopleMatch) {
-    entities.people.push(peopleMatch[1].trim());
+    entities.people.push(peopleMatch[1]);
   }
 
-  // Topic detection
   const knownTopics = ['budget', 'invoice', 'report', 'deployment'];
   knownTopics.forEach(topic => {
     if (lowerText.includes(topic)) {
@@ -92,25 +172,34 @@ function extractEntities(text) {
 // Suggested Actions
 // ==============================
 
-function generateSuggestedActions(category) {
-  return SUGGESTED_ACTIONS[category] || SUGGESTED_ACTIONS.general;
-}
+const SUGGESTED_ACTIONS = {
+  scheduling: ['Block calendar', 'Send invite', 'Prepare agenda', 'Set reminder'],
+  finance: ['Check budget', 'Get approval', 'Generate invoice', 'Update records'],
+  technical: ['Diagnose issue', 'Check resources', 'Assign technician', 'Document fix'],
+  safety: ['Conduct inspection', 'File report', 'Notify supervisor', 'Update checklist'],
+  general: ['Review task', 'Assign owner', 'Set deadline'],
+};
 
 // ==============================
-// Main Classification Function
+// Main ML-like Classification Function
 // ==============================
 
 export function classifyTask(description) {
-  const category = detectCategory(description);
-  const priority = detectPriority(description);
+  const categoryResult = predictCategory(description);
+  const priorityResult = predictPriority(description);
   const extracted_entities = extractEntities(description);
-  const suggested_actions = generateSuggestedActions(category);
 
   return {
-    category,
-    priority,
+    category: categoryResult.label,
+    category_confidence: categoryResult.confidence,
+    priority: priorityResult.label,
+    priority_confidence: priorityResult.confidence,
     extracted_entities,
-    suggested_actions,
+    suggested_actions:
+      SUGGESTED_ACTIONS[categoryResult.label] || SUGGESTED_ACTIONS.general,
+    explainability: {
+      category_probabilities: categoryResult.probabilities,
+      priority_probabilities: priorityResult.probabilities,
+    },
   };
 }
-
