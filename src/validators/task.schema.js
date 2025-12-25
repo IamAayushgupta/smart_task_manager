@@ -7,7 +7,7 @@ const normalizeStatus = (value) => {
   const normalizedMap = {
     'pending': 'pending',
     'in progress': 'in_progress',
-    'in_progress': 'in_progress',
+    'in-progress': 'in_progress',
     'completed': 'completed',
   };
 
