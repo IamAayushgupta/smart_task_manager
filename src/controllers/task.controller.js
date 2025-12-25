@@ -7,8 +7,6 @@ import { extractIntentML } from '../services/intentML.service.js';
    CREATE TASK
 ===================================================== */
 export async function createTask(req, res) {
-  console.log('🧪 CREATE TASK HIT');
-  console.log('🧪 DEVICE ID IN CONTROLLER:', req.deviceId);
   try {
     const validatedData = createTaskSchema.parse(req.body);
     const { title, description, assigned_to, due_date } = validatedData;
